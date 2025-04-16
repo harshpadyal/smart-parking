@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Student Registration</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="form-container">
+        <h2>Smart Parking Registration</h2>
+        <form action="/register" method="POST">
+            <input type="text" name="name" placeholder="Name" required><br>
+            <input type="email" name="email" placeholder="Email" required><br>
+            <input type="text" name="batch" placeholder="Batch" required><br>
+            <input type="text" name="branch" placeholder="Branch" required><br>
+            <input type="text" name="division" placeholder="Division" required><br>
+            <input type="text" name="vesit_id" placeholder="VESIT ID" required><br>
+            <input type="text" name="license_plate" placeholder="License Plate" required><br>
+            <input type="password" name="password" placeholder="Password" required />
+            <button type="submit">Register</button>
+        </form>
+    </div>
+</body>
+</html>

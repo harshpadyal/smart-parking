@@ -18,7 +18,7 @@ app = Flask(__name__, static_folder='../frontend', static_url_path='/')
 CORS(app)
 
 # MongoDB Atlas Connection
-MONGO_URI = "mongodb+srv://root:root@cluster0.nff1ovs.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0" 
+MONGO_URI = "mongodb+srv://root:root@cluster0.nokldp5.mongodb.net/?retryWrites=true&w=majority&tls=true" 
 client = MongoClient(MONGO_URI)
 db = client['smart_parking']
 students_collection = db['students']
@@ -29,6 +29,9 @@ model = YOLO('best.pt')
 
 # Initialize PaddleOCR
 ocr = PaddleOCR(use_angle_cls=True, use_gpu=False)
+
+# Parking slots (global state)
+parklist = [0] * 10  # 0 = empty, 1 = occupied
 
 # ----------- PaddleOCR Function -----------
 def paddle_ocr(frame, x1, y1, x2, y2):
@@ -62,17 +65,21 @@ def serve_static_file(path):
 
 @app.route('/process_license_plate', methods=['POST'])
 def process_plate():
+    global parklist
     try:
         data = request.get_json()
         image_data = data.get('image')
+        slot = int(data.get('slot', -1))  # Get slot, default to -1 if not provided
         if not image_data:
             return jsonify({'error': 'No image provided'}), 400
 
+        # Decode image from base64
         image_data = image_data.split(',')[1]
         image_bytes = base64.b64decode(image_data)
         nparr = np.frombuffer(image_bytes, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
+        # YOLO detection
         results = model(image, conf=0.45)[0]
         if len(results.boxes) == 0:
             return jsonify({'error': 'No license plate detected'}), 404
@@ -84,10 +91,30 @@ def process_plate():
         if not plate_text:
             return jsonify({'error': 'Could not read plate number'}), 422
 
+        # Check if license plate is registered
+        student = students_collection.find_one({"license_plate": plate_text})
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        parking_logs_collection.insert_one({"plate_number": plate_text, "timestamp": timestamp})
 
-        return jsonify({'plate_number': plate_text, 'timestamp': timestamp})
+        if not student:
+            return jsonify({'error': 'Not registered license plate', 'plate_number': plate_text}), 403
+
+        # If slot is provided and valid, park the vehicle
+        if slot >= 0:
+            if slot >= len(parklist) or parklist[slot] == 1:
+                return jsonify({'error': 'Invalid or occupied slot'}), 400
+            parklist[slot] = 1  # Mark slot as occupied
+            parking_logs_collection.insert_one({
+                "plate_number": plate_text,
+                "slot": slot,
+                "timestamp": timestamp,
+                "action": "entry"
+            })
+
+        return jsonify({
+            'plate_number': plate_text,
+            'timestamp': timestamp,
+            'slot': slot if slot >= 0 else None
+        })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
