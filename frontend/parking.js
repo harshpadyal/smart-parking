@@ -105,19 +105,39 @@ function queuecheck(slot) {
 
 function carexit(slot) {
     if (!parklock) {
-        parklist[slot] = 0;
-        console.log(parklist);
         parklock = true;
-        document.getElementById('slot' + (slot + 1).toString()).style.background = 'rgb(27,118,19)';
-        if (slot <= 4)
-            document.getElementById('car' + slot.toString()).style.animation = 'car-exit-top 2s both';
-        else
-            document.getElementById('car' + slot.toString()).style.animation = 'car-exit-bottom 2s both';
-        setTimeout(function() {
-            document.getElementById('car' + slot.toString()).remove();
+        console.log("Attempting to exit slot:", slot);
+        fetch('http://localhost:5000/exit_vehicle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slot: slot })
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw err; });
+            }
+            return response.json();
+        })
+        .then(data => {
+            parklist[slot] = 0;
+            console.log(parklist);
+            document.getElementById('slot' + (slot + 1).toString()).style.background = 'rgb(27,118,19)';
+            if (slot <= 4)
+                document.getElementById('car' + slot.toString()).style.animation = 'car-exit-top 2s both';
+            else
+                document.getElementById('car' + slot.toString()).style.animation = 'car-exit-bottom 2s both';
+            setTimeout(function() {
+                document.getElementById('car' + slot.toString()).remove();
+                parklock = false;
+                queuecheck(slot);
+                alert("Vehicle exited: " + data.plate_number + " from slot " + (slot + 1));
+            }, 2000);
+        })
+        .catch(err => {
+            console.error("Exit error:", err);
             parklock = false;
-            queuecheck(slot);
-        }, 2000);
+            alert("Error during exit: " + (err.error || "Unknown error"));
+        });
     }
 }
 
