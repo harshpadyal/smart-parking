@@ -15,11 +15,16 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Flask App
 app = Flask(__name__, static_folder="../frontend", static_url_path="/")
-CORS(app)
+CORS(app, resources={r"/*": {"origins": ["http://localhost:5000", "http://192.168.1.101:5000", "http://localhost:5001", "http://192.168.1.101:5001"]}})
 
 # MongoDB Atlas Connection
 MONGO_URI = "mongodb+srv://root:root@cluster0.nokldp5.mongodb.net/?retryWrites=true&w=majority&tls=true"
 client = MongoClient(MONGO_URI)
+try:
+    client.server_info()  # Test MongoDB connection
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Connected to MongoDB")
+except Exception as e:
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] MongoDB connection failed: {str(e)}")
 db = client["smart_parking"]
 students_collection = db["students"]
 parking_logs_collection = db["parking_logs"]
@@ -36,26 +41,27 @@ parklist = [0] * 10  # 0 = empty, 1 = occupied
 # Initialize parklist from MongoDB logs on startup
 def initialize_parklist():
     global parklist
-    print("Initializing parklist from MongoDB logs...")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Initializing parklist from MongoDB logs...")
     for slot in range(10):
-        # Find the most recent log for this slot
         latest_log = parking_logs_collection.find_one(
             {"slot": slot},
             sort=[("timestamp", -1)]
         )
         if latest_log and latest_log["action"] == "entry":
-            # Check if there's an exit log after this entry
             latest_exit = parking_logs_collection.find_one(
                 {"slot": slot, "action": "exit", "timestamp": {"$gt": latest_log["timestamp"]}},
                 sort=[("timestamp", -1)]
             )
             if not latest_exit:
                 parklist[slot] = 1
-                print(f"Slot {slot} marked as occupied based on MongoDB log")
-    print(f"Initialized parklist: {parklist}")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Slot {slot} marked as occupied based on MongoDB log")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Initialized parklist: {parklist}")
 
 # Call initialization on startup
 initialize_parklist()
+
+# Debug: Print registered routes
+print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Registered routes: {app.url_map}")
 
 # ----------- PaddleOCR Function -----------
 def paddle_ocr(frame, x1, y1, x2, y2):
@@ -75,6 +81,15 @@ def paddle_ocr(frame, x1, y1, x2, y2):
 
 # ----------- Routes -------------
 
+@app.route("/health", methods=["GET"])
+def health_check():
+    try:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Health check requested")
+        return jsonify({"status": "healthy", "parklist": parklist}), 200
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Health check failed: {str(e)}")
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
+
 @app.route("/")
 def serve_index():
     return send_from_directory(app.static_folder, "parking.html")
@@ -83,9 +98,23 @@ def serve_index():
 def serve_student_portal():
     return send_from_directory(app.static_folder, "student_portal.html")
 
+@app.route("/available")
+def serve_available():
+    return send_from_directory(app.static_folder, "available.html")
+
 @app.route("/<path:path>")
 def serve_static_file(path):
     return send_from_directory(app.static_folder, path)
+
+@app.route("/api/available-spots", methods=["GET"])
+def get_available_spots():
+    try:
+        booked = [i + 1 for i in range(10) if parklist[i] == 1]
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Available spots: booked={booked}")
+        return jsonify({"booked": booked})
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error in get_available_spots: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/get_parking_state", methods=["GET"])
 def get_parking_state():
@@ -102,12 +131,13 @@ def get_parking_state():
                         "slot": slot,
                         "plate_number": recent_entry["plate_number"]
                     })
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Returning parking state: parklist={parklist}, parked_slots={parked_slots}")
         return jsonify({
             "parklist": parklist,
             "parked_slots": parked_slots
         })
     except Exception as e:
-        print(f"Error in get_parking_state: {str(e)}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error in get_parking_state: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/process_license_plate", methods=["POST"])
@@ -115,7 +145,7 @@ def process_plate():
     global parklist
     try:
         data = request.get_json()
-        print("Received data:", data)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Received data:", data)
         image_data = data.get("image")
         slot = data.get("slot")
 
@@ -128,45 +158,45 @@ def process_plate():
             return jsonify({"error": "Slot already occupied"}), 400
 
         # Decode base64 image
-        print("Raw image_data (first 50 chars):", image_data[:50])
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Raw image_data (first 50 chars):", image_data[:50])
         if "," in image_data:
             image_data = image_data.split(",")[1]
-        print("Base64 part (first 50 chars):", image_data[:50])
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Base64 part (first 50 chars):", image_data[:50])
 
         try:
             image_bytes = base64.b64decode(image_data)
         except base64.binascii.Error as e:
             return jsonify({"error": f"Invalid base64 data: {str(e)}"}), 400
 
-        print("Decoded bytes length:", len(image_bytes))
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Decoded bytes length:", len(image_bytes))
         if len(image_bytes) == 0:
             return jsonify({"error": "Empty image data after decoding"}), 400
 
         nparr = np.frombuffer(image_bytes, np.uint8)
-        print("NumPy array length:", len(nparr))
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] NumPy array length:", len(nparr))
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         if image is None:
             return jsonify({"error": "Failed to decode image into a valid format"}), 400
-        print("Image decoded, shape:", image.shape)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Image decoded, shape:", image.shape)
 
         # YOLO detection
-        print("Running YOLO...")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running YOLO...")
         results = model(image, conf=0.45)[0]
         if len(results.boxes) == 0:
             return jsonify({"error": "No license plate detected"}), 404
 
         box = results.boxes[0].xyxy[0].cpu().numpy().astype(int)
         x1, y1, x2, y2 = box
-        print(f"Detected box: {x1},{y1},{x2},{y2}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Detected box: {x1},{y1},{x2},{y2}")
         plate_text = paddle_ocr(image, x1, y1, x2, y2)
-        print(f"Extracted plate text: {plate_text}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Extracted plate text: {plate_text}")
 
         if not plate_text:
             return jsonify({"error": "Could not read plate number"}), 422
 
         # Check if license plate is registered
-        print("Checking students collection...")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Checking students collection...")
         student = students_collection.find_one({"license_plate": plate_text})
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -175,7 +205,7 @@ def process_plate():
 
         # Park the vehicle
         parklist[slot] = 1
-        print(f"Parking vehicle at slot {slot}, Updated parklist: {parklist}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Parking vehicle at slot {slot}, Updated parklist: {parklist}")
         parking_logs_collection.insert_one({
             "plate_number": plate_text,
             "slot": slot,
@@ -190,7 +220,7 @@ def process_plate():
         })
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/exit_vehicle", methods=["POST"])
@@ -199,14 +229,14 @@ def exit_vehicle():
     try:
         data = request.get_json()
         slot = data.get("slot")
-        print(f"Exit request received for slot: {slot}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Exit request received for slot: {slot}")
 
         # Validate inputs
         if slot is None or not isinstance(slot, int) or slot < 0 or slot >= len(parklist):
-            print(f"Invalid slot number: {slot}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Invalid slot number: {slot}")
             return jsonify({"error": "Invalid slot number"}), 400
         if parklist[slot] == 0:
-            print(f"Slot {slot} is already empty")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Slot {slot} is already empty")
             return jsonify({"error": "Slot is already empty"}), 400
 
         # Find the most recent entry log for this slot
@@ -215,7 +245,7 @@ def exit_vehicle():
             sort=[("timestamp", -1)]
         )
         if not recent_entry:
-            print(f"No entry log found for slot {slot}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] No entry log found for slot {slot}")
             return jsonify({"error": "No entry log found for this slot"}), 404
 
         plate_number = recent_entry["plate_number"]
@@ -223,14 +253,14 @@ def exit_vehicle():
 
         # Log the exit
         parklist[slot] = 0
-        print(f"Logging exit for plate {plate_number} at slot {slot}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Logging exit for plate {plate_number} at slot {slot}")
         parking_logs_collection.insert_one({
             "plate_number": plate_number,
             "slot": slot,
             "timestamp": timestamp,
             "action": "exit"
         })
-        print(f"Exit logged successfully, Updated parklist: {parklist}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Exit logged successfully, Updated parklist: {parklist}")
 
         return jsonify({
             "plate_number": plate_number,
@@ -240,7 +270,31 @@ def exit_vehicle():
         })
 
     except Exception as e:
-        print(f"Error in exit_vehicle: {str(e)}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error in exit_vehicle: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/reset_parking_state", methods=["POST"])
+def reset_parking_state():
+    global parklist
+    try:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Resetting parking state...")
+        parklist = [0] * 10
+        for slot in range(10):
+            latest_log = parking_logs_collection.find_one(
+                {"slot": slot},
+                sort=[("timestamp", -1)]
+            )
+            if latest_log and latest_log["action"] == "entry":
+                latest_exit = parking_logs_collection.find_one(
+                    {"slot": slot, "action": "exit", "timestamp": {"$gt": latest_log["timestamp"]}},
+                    sort=[("timestamp", -1)]
+                )
+                if not latest_exit:
+                    parklist[slot] = 1
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Parking state reset, Updated parklist: {parklist}")
+        return jsonify({"message": "Parking state reset successfully", "parklist": parklist})
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error in reset_parking_state: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/register_student", methods=["POST"])
@@ -277,6 +331,7 @@ def register_student():
         return jsonify({"message": "Student registered successfully", "data": student_data}), 201
 
     except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error in register_student: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/student_activity", methods=["POST"])
@@ -295,11 +350,21 @@ def student_activity():
         license_plate = student["license_plate"]
         activities = list(parking_logs_collection.find({"plate_number": license_plate}).sort("timestamp", -1))
 
-        return jsonify({"activities": [{"plate_number": act["plate_number"], "slot": act["slot"], "timestamp": act["timestamp"], "action": act["action"]} for act in activities]}), 200
+        return jsonify({
+            "activities": [
+                {
+                    "plate_number": act["plate_number"],
+                    "slot": act["slot"],
+                    "timestamp": act["timestamp"],
+                    "action": act["action"]
+                } for act in activities
+            ]
+        }), 200
 
     except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error in student_activity: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # ----------- Main -------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5001)

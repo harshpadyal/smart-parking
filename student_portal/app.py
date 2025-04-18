@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory
 from models.db_config import students_collection
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
@@ -8,7 +8,7 @@ from bson.objectid import ObjectId
 
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")
 app.secret_key = os.getenv("SECRET_KEY")
 app.permanent_session_lifetime = timedelta(days=7)
 
@@ -66,11 +66,9 @@ def login():
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' in session:
-        user = students_collection.find_one({'_id': ObjectId(session['user_id'])})
-        name = session.get('name')  # ✅ get name from session
-        return render_template('dashboard.html', name=name)
+        return send_from_directory(app.static_folder, 'available.html')
     else:
-        return redirect(url_for('login'))
+        return redirect(url_for('home'))
 
 @app.route('/logout')
 def logout():
@@ -78,5 +76,9 @@ def logout():
     flash("You have been logged out.", "info")
     return redirect(url_for('home'))
 
+@app.route('/static/<path:path>')
+def serve_static(path):
+    return send_from_directory(app.static_folder, path)
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)

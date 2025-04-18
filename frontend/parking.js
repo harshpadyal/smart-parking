@@ -7,7 +7,7 @@ video.style.transform = 'translate(-50%, -50%)';
 video.style.width = '50%';
 video.style.zIndex = '1000';
 video.style.display = 'none';
-video.autoplay = true; // Ensure webcam starts
+video.autoplay = true;
 document.body.appendChild(video);
 
 const canvas = document.createElement('canvas');
@@ -31,6 +31,7 @@ var w, h;
 var parklock = false;
 var parklist = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 var queueitems = 0;
+const API_BASE_URL = "http://192.168.1.101:5001";
 
 function setupparkingmanager() {
     w = document.getElementById('parkingspace').offsetWidth;
@@ -67,12 +68,11 @@ function setupparkingmanager() {
     anim.appendChild(rule4);
     document.getElementById('parkingspace').appendChild(anim);
 
-    // Fetch parking state on load
     fetchParkingState();
 }
 
 function fetchParkingState() {
-    fetch('http://localhost:5000/get_parking_state', {
+    fetch(`${API_BASE_URL}/get_parking_state`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
     })
@@ -147,7 +147,7 @@ function carexit(slot) {
     if (!parklock) {
         parklock = true;
         console.log("Attempting to exit slot:", slot);
-        fetch('http://localhost:5000/exit_vehicle', {
+        fetch(`${API_BASE_URL}/exit_vehicle`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ slot: slot })
@@ -217,7 +217,7 @@ function carenter(slot) {
                     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
                     const imageData = canvas.toDataURL('image/jpeg');
-                    fetch('http://localhost:5000/process_license_plate', {
+                    fetch(`${API_BASE_URL}/process_license_plate`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ image: imageData, slot: slot })
@@ -243,7 +243,7 @@ function carenter(slot) {
                             generatenewcar(slot);
                             document.getElementById('slot' + (slot + 1).toString()).style.background = 'rgb(146,18,18)';
                             if (slot != 4 && slot != 9)
-                                document.getElementById('car' + slot.toString()).style.right = (-w + (w * .1) + (((5 - (slot + 1) % 5)) * ((w * .8) * .2)) + ((w * .8) * .05)) + 'px';
+                                document.getElementById('car' + slot.toString()).style.right = (-w + (w * .1) + (((5 - (slot.slot + 1) % 5)) * ((w * .8) * .2)) + ((w * .8) * .05)) + 'px';
                             else
                                 document.getElementById('car' + slot.toString()).style.right = (-w + (w * .1) + ((w * .8) * .05)) + 'px';
                             if (slot <= 4)
@@ -270,7 +270,7 @@ function carenter(slot) {
 
                 requestAnimationFrame(processFrame);
             })
-            .catch(err => {
+            .then(err => {
                 console.error("Error accessing camera:", err);
                 alert("Camera access denied. Please allow camera permissions.");
             });
