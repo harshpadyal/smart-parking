@@ -33,6 +33,30 @@ ocr = PaddleOCR(use_angle_cls=True, use_gpu=False)
 # Parking slots (global state)
 parklist = [0] * 10  # 0 = empty, 1 = occupied
 
+# Initialize parklist from MongoDB logs on startup
+def initialize_parklist():
+    global parklist
+    print("Initializing parklist from MongoDB logs...")
+    for slot in range(10):
+        # Find the most recent log for this slot
+        latest_log = parking_logs_collection.find_one(
+            {"slot": slot},
+            sort=[("timestamp", -1)]
+        )
+        if latest_log and latest_log["action"] == "entry":
+            # Check if there's an exit log after this entry
+            latest_exit = parking_logs_collection.find_one(
+                {"slot": slot, "action": "exit", "timestamp": {"$gt": latest_log["timestamp"]}},
+                sort=[("timestamp", -1)]
+            )
+            if not latest_exit:
+                parklist[slot] = 1
+                print(f"Slot {slot} marked as occupied based on MongoDB log")
+    print(f"Initialized parklist: {parklist}")
+
+# Call initialization on startup
+initialize_parklist()
+
 # ----------- PaddleOCR Function -----------
 def paddle_ocr(frame, x1, y1, x2, y2):
     frame = frame[y1:y2, x1:x2]
@@ -62,6 +86,29 @@ def serve_student_portal():
 @app.route("/<path:path>")
 def serve_static_file(path):
     return send_from_directory(app.static_folder, path)
+
+@app.route("/get_parking_state", methods=["GET"])
+def get_parking_state():
+    try:
+        parked_slots = []
+        for slot in range(10):
+            if parklist[slot] == 1:
+                recent_entry = parking_logs_collection.find_one(
+                    {"slot": slot, "action": "entry"},
+                    sort=[("timestamp", -1)]
+                )
+                if recent_entry:
+                    parked_slots.append({
+                        "slot": slot,
+                        "plate_number": recent_entry["plate_number"]
+                    })
+        return jsonify({
+            "parklist": parklist,
+            "parked_slots": parked_slots
+        })
+    except Exception as e:
+        print(f"Error in get_parking_state: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/process_license_plate", methods=["POST"])
 def process_plate():

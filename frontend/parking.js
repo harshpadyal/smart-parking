@@ -7,6 +7,7 @@ video.style.transform = 'translate(-50%, -50%)';
 video.style.width = '50%';
 video.style.zIndex = '1000';
 video.style.display = 'none';
+video.autoplay = true; // Ensure webcam starts
 document.body.appendChild(video);
 
 const canvas = document.createElement('canvas');
@@ -65,6 +66,45 @@ function setupparkingmanager() {
         '}');
     anim.appendChild(rule4);
     document.getElementById('parkingspace').appendChild(anim);
+
+    // Fetch parking state on load
+    fetchParkingState();
+}
+
+function fetchParkingState() {
+    fetch('http://localhost:5000/get_parking_state', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(err => { throw err; });
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log("Fetched parking state:", data);
+        parklist = data.parklist;
+        data.parked_slots.forEach(slot => {
+            if (parklist[slot.slot] === 1) {
+                generatenewcar(slot.slot);
+                document.getElementById('slot' + (slot.slot + 1).toString()).style.background = 'rgb(146,18,18)';
+                const car = document.getElementById('car' + slot.slot.toString());
+                if (slot.slot != 4 && slot.slot != 9)
+                    car.style.right = (-w + (w * .1) + (((5 - (slot.slot + 1) % 5)) * ((w * .8) * .2)) + ((w * .8) * .05)) + 'px';
+                else
+                    car.style.right = (-w + (w * .1) + ((w * .8) * .05)) + 'px';
+                car.style.transform = slot.slot <= 4
+                    ? `rotate(270deg) translate(0px, -${w}px) rotate(90deg) translate(0px, -${h * .25}px)`
+                    : `rotate(270deg) translate(0px, -${w}px) rotate(90deg) translate(0px, ${h * .25}px)`;
+            }
+        });
+        console.log("Updated parklist:", parklist);
+    })
+    .catch(err => {
+        console.error("Error fetching parking state:", err);
+        alert("Failed to load parking state: " + (err.error || "Unknown error"));
+    });
 }
 
 function updatequeue() {
@@ -152,13 +192,19 @@ function generatenewcar(slot) {
 }
 
 function carenter(slot) {
+    console.log("carenter called for slot:", slot);
     if (!document.getElementById('car' + slot.toString()) && !parklock) {
         navigator.mediaDevices.getUserMedia({ video: true })
             .then(stream => {
+                console.log("Webcam stream obtained:", stream);
                 video.srcObject = stream;
                 video.style.display = 'block';
                 scanFrame.style.display = 'block';
-                video.play();
+                video.play().then(() => {
+                    console.log("Webcam playing");
+                }).catch(err => {
+                    console.error("Play error:", err);
+                });
 
                 let isProcessing = false;
                 function processFrame() {
@@ -191,7 +237,6 @@ function carenter(slot) {
                             alert("Error: " + data.error + (data.plate_number ? " (" + data.plate_number + ")" : ""));
                             isProcessing = false;
                         } else {
-                            // Success: License plate is registered
                             parklist[slot] = 1;
                             console.log(parklist);
                             parklock = true;
@@ -218,7 +263,7 @@ function carenter(slot) {
                             alert("Not registered license plate: " + err.plate_number);
                         } else {
                             isProcessing = false;
-                            requestAnimationFrame(processFrame); // Retry on other errors
+                            requestAnimationFrame(processFrame);
                         }
                     });
                 }
