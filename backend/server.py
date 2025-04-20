@@ -15,8 +15,14 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Flask App
 app = Flask(__name__, static_folder="../frontend", static_url_path="/")
-CORS(app, resources={r"/*": {"origins": ["http://localhost:5000", "http://192.168.1.101:5000", "http://localhost:5001", "http://192.168.1.101:5001"]}})
-
+CORS(app, resources={r"/*": {"origins": [
+    "http://127.0.0.1:5000",
+    "http://localhost:5000",
+    "http://192.168.1.101:5000",
+    "http://127.0.0.1:5001",
+    "http://localhost:5001",
+    "http://192.168.1.101:5001"
+]}})
 # MongoDB Atlas Connection
 MONGO_URI = "mongodb+srv://root:root@cluster0.nokldp5.mongodb.net/?retryWrites=true&w=majority&tls=true"
 client = MongoClient(MONGO_URI)

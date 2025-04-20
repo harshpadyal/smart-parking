@@ -31,7 +31,22 @@ var w, h;
 var parklock = false;
 var parklist = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 var queueitems = 0;
-const API_BASE_URL = "http://192.168.1.101:5001";
+const API_BASE_URL = "http://127.0.0.1:5001";
+
+async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url, options);
+            if (res.ok) return res;
+            const errorText = await res.text();
+            throw new Error(`Fetch failed: ${res.status} ${res.statusText} - ${errorText}`);
+        } catch (err) {
+            if (i === retries - 1) throw err;
+            console.warn(`Retry ${i + 1}/${retries} for ${url} after ${delay}ms: ${err.message}`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
 
 function setupparkingmanager() {
     w = document.getElementById('parkingspace').offsetWidth;
@@ -71,18 +86,13 @@ function setupparkingmanager() {
     fetchParkingState();
 }
 
-function fetchParkingState() {
-    fetch(`${API_BASE_URL}/get_parking_state`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-    })
-    .then(response => {
-        if (!response.ok) {
-            return response.json().then(err => { throw err; });
-        }
-        return response.json();
-    })
-    .then(data => {
+async function fetchParkingState() {
+    try {
+        const res = await fetchWithRetry(`${API_BASE_URL}/get_parking_state`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
         console.log("Fetched parking state:", data);
         parklist = data.parklist;
         data.parked_slots.forEach(slot => {
@@ -100,11 +110,10 @@ function fetchParkingState() {
             }
         });
         console.log("Updated parklist:", parklist);
-    })
-    .catch(err => {
+    } catch (err) {
         console.error("Error fetching parking state:", err);
-        alert("Failed to load parking state: " + (err.error || "Unknown error"));
-    });
+        alert("Failed to load parking state: " + (err.message || "Unknown error"));
+    }
 }
 
 function updatequeue() {
@@ -143,22 +152,17 @@ function queuecheck(slot) {
     }
 }
 
-function carexit(slot) {
+async function carexit(slot) {
     if (!parklock) {
         parklock = true;
         console.log("Attempting to exit slot:", slot);
-        fetch(`${API_BASE_URL}/exit_vehicle`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ slot: slot })
-        })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().then(err => { throw err; });
-            }
-            return response.json();
-        })
-        .then(data => {
+        try {
+            const res = await fetchWithRetry(`${API_BASE_URL}/exit_vehicle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ slot: slot })
+            });
+            const data = await res.json();
             parklist[slot] = 0;
             console.log(parklist);
             document.getElementById('slot' + (slot + 1).toString()).style.background = 'rgb(27,118,19)';
@@ -172,12 +176,11 @@ function carexit(slot) {
                 queuecheck(slot);
                 alert("Vehicle exited: " + data.plate_number + " from slot " + (slot + 1));
             }, 2000);
-        })
-        .catch(err => {
+        } catch (err) {
             console.error("Exit error:", err);
             parklock = false;
-            alert("Error during exit: " + (err.error || "Unknown error"));
-        });
+            alert("Error during exit: " + (err.message || "Unknown error"));
+        }
     }
 }
 
@@ -211,23 +214,18 @@ function carenter(slot) {
                     if (isProcessing || !video.srcObject) return;
                     isProcessing = true;
 
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
+                    canvas.width = video.videoWidth / 2;
+                    canvas.height = video.videoHeight / 2;
                     const context = canvas.getContext('2d');
                     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                    const imageData = canvas.toDataURL('image/jpeg');
-                    fetch(`${API_BASE_URL}/process_license_plate`, {
+                    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                    fetchWithRetry(`${API_BASE_URL}/process_license_plate`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ image: imageData, slot: slot })
                     })
-                    .then(response => {
-                        if (!response.ok) {
-                            return response.json().then(err => { throw err; });
-                        }
-                        return response.json();
-                    })
+                    .then(response => response.json())
                     .then(data => {
                         stream.getTracks().forEach(track => track.stop());
                         video.style.display = 'none';
@@ -243,7 +241,7 @@ function carenter(slot) {
                             generatenewcar(slot);
                             document.getElementById('slot' + (slot + 1).toString()).style.background = 'rgb(146,18,18)';
                             if (slot != 4 && slot != 9)
-                                document.getElementById('car' + slot.toString()).style.right = (-w + (w * .1) + (((5 - (slot.slot + 1) % 5)) * ((w * .8) * .2)) + ((w * .8) * .05)) + 'px';
+                                document.getElementById('car' + slot.toString()).style.right = (-w + (w * .1) + (((5 - (slot + 1) % 5)) * ((w * .8) * .2)) + ((w * .8) * .05)) + 'px';
                             else
                                 document.getElementById('car' + slot.toString()).style.right = (-w + (w * .1) + ((w * .8) * .05)) + 'px';
                             if (slot <= 4)
@@ -255,12 +253,17 @@ function carenter(slot) {
                         }
                     })
                     .catch(err => {
-                        console.error("Error:", err);
+                        console.error("Process error:", err);
                         if (err.error === "Not registered license plate") {
                             stream.getTracks().forEach(track => track.stop());
                             video.style.display = 'none';
                             scanFrame.style.display = 'none';
                             alert("Not registered license plate: " + err.plate_number);
+                        } else if (err.message.includes("ERR_CONNECTION_REFUSED")) {
+                            stream.getTracks().forEach(track => track.stop());
+                            video.style.display = 'none';
+                            scanFrame.style.display = 'none';
+                            alert("Cannot connect to server. Please check if the backend is running.");
                         } else {
                             isProcessing = false;
                             requestAnimationFrame(processFrame);
@@ -270,7 +273,7 @@ function carenter(slot) {
 
                 requestAnimationFrame(processFrame);
             })
-            .then(err => {
+            .catch(err => {
                 console.error("Error accessing camera:", err);
                 alert("Camera access denied. Please allow camera permissions.");
             });
