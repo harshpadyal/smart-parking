@@ -9,6 +9,13 @@ from paddleocr import PaddleOCR
 from flask_cors import CORS
 from pymongo import MongoClient
 from datetime import datetime
+from dotenv import load_dotenv
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# Load environment variables
+load_dotenv()
 
 # Set environment variable to avoid KMP duplicate library issue
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -23,8 +30,9 @@ CORS(app, resources={r"/*": {"origins": [
     "http://localhost:5001",
     "http://192.168.1.101:5001"
 ]}})
+
 # MongoDB Atlas Connection
-MONGO_URI = "mongodb+srv://root:root@cluster0.nokldp5.mongodb.net/?retryWrites=true&w=majority&tls=true"
+MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
 try:
     client.server_info()  # Test MongoDB connection
@@ -43,6 +51,43 @@ ocr = PaddleOCR(use_angle_cls=True, use_gpu=False)
 
 # Parking slots (global state)
 parklist = [0] * 10  # 0 = empty, 1 = occupied
+
+# Email configuration
+SMTP_EMAIL = os.getenv("SMTP_EMAIL")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+
+# Email sending function
+def send_email(to_email, plate_number, slot, action, timestamp):
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = SMTP_EMAIL
+        msg["To"] = to_email
+        msg["Subject"] = f"Smart Parking: Vehicle {action.capitalize()} Notification"
+
+        if action == "entry":
+            body = (
+                f"Dear User,\n\n"
+                f"Your vehicle with license plate {plate_number} has been successfully parked in slot {slot + 1} at {timestamp}.\n\n"
+                f"Thank you for using Smart Parking!\n"
+                f"VESIT Team"
+            )
+        else:  # exit
+            body = (
+                f"Dear User,\n\n"
+                f"Your vehicle with license plate {plate_number} has exited from slot {slot + 1} at {timestamp}.\n\n"
+                f"Thank you for using Smart Parking!\n"
+                f"VESIT Team"
+            )
+
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Email sent to {to_email} for {action} of plate {plate_number} in slot {slot}")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Failed to send email to {to_email}: {str(e)}")
 
 # Initialize parklist from MongoDB logs on startup
 def initialize_parklist():
@@ -115,8 +160,10 @@ def serve_static_file(path):
 @app.route("/api/available-spots", methods=["GET"])
 def get_available_spots():
     try:
+        if not isinstance(parklist, list) or len(parklist) != 10:
+            raise ValueError("Invalid parklist state")
         booked = [i + 1 for i in range(10) if parklist[i] == 1]
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Available spots: booked={booked}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Available spots: booked={booked}, parklist={parklist}")
         return jsonify({"booked": booked})
     except Exception as e:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error in get_available_spots: {str(e)}")
@@ -219,6 +266,9 @@ def process_plate():
             "action": "entry"
         })
 
+        # Send email notification
+        send_email(student["email"], plate_text, slot, "entry", timestamp)
+
         return jsonify({
             "plate_number": plate_text,
             "timestamp": timestamp,
@@ -267,6 +317,11 @@ def exit_vehicle():
             "action": "exit"
         })
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Exit logged successfully, Updated parklist: {parklist}")
+
+        # Send email notification
+        student = students_collection.find_one({"license_plate": plate_number})
+        if student:
+            send_email(student["email"], plate_number, slot, "exit", timestamp)
 
         return jsonify({
             "plate_number": plate_number,
